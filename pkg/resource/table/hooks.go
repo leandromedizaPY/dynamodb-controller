@@ -910,3 +910,43 @@ func (rm *resourceManager) updateContributorInsights(
 
 	return nil
 }
+
+func getProvisionedThroughputManagedByAnnotation(table *svcapitypes.Table) (string, bool) {
+	if len(table.Annotations) == 0 {
+		return "", false
+	}
+	managedBy, ok := table.Annotations[svcapitypes.ProvisionedThroughputManagedByAnnotation]
+	return managedBy, ok
+}
+
+func isProvisionedThroughputManagedByExternalAutoscaler(table *svcapitypes.Table) bool {
+	managedBy, ok := getProvisionedThroughputManagedByAnnotation(table)
+	if !ok {
+		return false
+	}
+	return managedBy == svcapitypes.ProvisionedThroughputManagedByExternalAutoscaler
+}
+
+func customPostCompare(
+	delta *ackcompare.Delta,
+	a *resource,
+	b *resource,
+) {
+	// We only want to compare the ProvisionedThroughput field if and only if it
+	// is managed by the controller. In the case where the ProvisionedThroughput
+	// is managed by an external entity, we do not want to compare the field.
+	// When managed by an external entity, an annotation is set on the
+	// table resource to indicate that the ProvisionedThroughput is managed
+	// externally.
+	if isProvisionedThroughputManagedByExternalAutoscaler(a.ko) && delta.DifferentAt("Spec.ProvisionedThroughput") {
+		// We need to unset the ProvisionedThroughput field in the delta so that the
+		// controller does not attempt to reconcile it.
+		newDiffs := make([]*ackcompare.Difference, 0)
+		for _, d := range delta.Differences {
+			if !strings.HasPrefix(d.Path.String(), "Spec.ProvisionedThroughput") {
+				newDiffs = append(newDiffs, d)
+			}
+		}
+		delta.Differences = newDiffs
+	}
+}
