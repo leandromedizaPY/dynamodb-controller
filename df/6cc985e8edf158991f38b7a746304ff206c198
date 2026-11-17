@@ -1,0 +1,31 @@
+apis/v1alpha1/annotation.go
+  s_8746bf538000ed::t_ab47c2ccab0d0f 1-50
+pkg/resource/table/delta.go
+  s_8746bf538000ed::t_ab47c2ccab0d0f 164
+pkg/resource/table/hooks.go
+  s_8746bf538000ed::t_ab47c2ccab0d0f 1245-1285
+pkg/resource/table/hooks_test.go
+  s_8746bf538000ed::t_ab47c2ccab0d0f 35,1269-1360,1362
+  s_8746bf538000ed::t_aae517a4c1e292 1361
+  s_8746bf538000ed::t_beed79a8195dd4 1363
+generator.yaml
+  s_8746bf538000ed::t_ab47c2ccab0d0f 105-106
+apis/v1alpha1/generator.yaml
+  s_8746bf538000ed::t_ab47c2ccab0d0f 105-106
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "df6cc985e8edf158991f38b7a746304ff206c198",
+  "prompts": {},
+  "sessions": {
+    "s_8746bf538000ed": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "57a92341-8744-446b-aca5-577ff1e8e6a9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Leandro Mediza <leandro.mediza@glovoapp.com>"
+    }
+  }
+}
