@@ -1,0 +1,24 @@
+test/e2e/resources/table_gsi_external_autoscaler.yaml
+  s_8746bf538000ed::t_79923eb57ef709 1-40
+test/e2e/tests/test_table.py
+  s_8746bf538000ed::t_79923eb57ef709 125-136,635-705
+  s_8746bf538000ed::t_0139672ffb5c6e 706
+test/e2e/table.py
+  s_8746bf538000ed::t_79923eb57ef709 219-243
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "af3f52e314fb84111c879c42e2df1a39a81771cc",
+  "prompts": {},
+  "sessions": {
+    "s_8746bf538000ed": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "57a92341-8744-446b-aca5-577ff1e8e6a9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Leandro Mediza <leandro.mediza@glovoapp.com>"
+    }
+  }
+}
