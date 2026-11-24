@@ -23,7 +23,7 @@ var (
 	// The value of this annotation must be one of the following:
 	//
 	// - 'external-autoscaler': The provisioned throughput is managed by an external entity. Causing
-	// 							the controller to completly ignore the fields `readCapacityUnits`
+	// 							the controller to completely ignore the fields `readCapacityUnits`
 	// 							and `writeCapacityUnits` of `provisionedThroughput` and not reconcile
 	// 							the provisioned throughput of a table.
 	//
@@ -34,7 +34,11 @@ var (
 	//
 	// By default the provisioned throughput is managed by the controller. If the annotation is not set, or
 	// the value is not one of the above, the controller will default to managing the provisioned throughput
-	// as if the annotation was set to "controller".
+	// as if the annotation was set to "ack-dynamodb-controller".
+	//
+	// This annotation is a temporary solution until `services.k8s.aws/ignore-field-drift` can
+	// ignore fields inside list entries, and will be deprecated then. It does not cover the
+	// provisioned throughput of `spec.tableReplicas`.
 	TableProvisionedThroughputManagedByAnnotation = fmt.Sprintf("%s/table-provisioned-throughput-managed-by", GroupVersion.Group)
 
 	// GSIProvisionedThroughputManagedByAnnotation is the annotation key used to set the management
@@ -51,6 +55,10 @@ var (
 	// 							global secondary index with the values of the spec.
 	//
 	// By default the provisioned throughput of the indexes is managed by the controller.
+	//
+	// This annotation is a temporary solution until `services.k8s.aws/ignore-field-drift` can
+	// ignore fields inside list entries, and will be deprecated then. It does not cover the
+	// provisioned throughput of global secondary indexes in `spec.tableReplicas`.
 	GSIProvisionedThroughputManagedByAnnotation = fmt.Sprintf("%s/gsi-provisioned-throughput-managed-by", GroupVersion.Group)
 )
 

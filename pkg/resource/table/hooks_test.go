@@ -1471,3 +1471,95 @@ func Test_updateGSIs_externalAutoscalerOmitsProvisionedThroughput(t *testing.T) 
 	require.NotContains(t, update, "ProvisionedThroughput")
 	require.Contains(t, update, "OnDemandThroughput")
 }
+
+func Test_updateGSIs_skipsEmptyUpdates(t *testing.T) {
+	newRM := func(client *recordingHTTPClient) *resourceManager {
+		return &resourceManager{
+			metrics: ackmetrics.NewMetrics("dynamodb"),
+			sdkapi: svcsdk.NewFromConfig(aws.Config{
+				Region:           "us-west-2",
+				Credentials:      fakeCredentialsProvider{},
+				HTTPClient:       client,
+				RetryMaxAttempts: 1,
+			}),
+		}
+	}
+	projectionOnly := func(name string) *v1alpha1.GlobalSecondaryIndex {
+		return &v1alpha1.GlobalSecondaryIndex{
+			IndexName: aws.String(name),
+			ProvisionedThroughput: &v1alpha1.ProvisionedThroughput{
+				ReadCapacityUnits:  aws.Int64(5000),
+				WriteCapacityUnits: aws.Int64(5000),
+			},
+			Projection: &v1alpha1.Projection{ProjectionType: aws.String("ALL")},
+		}
+	}
+	withOnDemand := func(name string) *v1alpha1.GlobalSecondaryIndex {
+		g := projectionOnly(name)
+		g.OnDemandThroughput = &v1alpha1.OnDemandThroughput{MaxReadRequestUnits: aws.Int64(100)}
+		return g
+	}
+	tests := []struct {
+		name          string
+		updated       []*v1alpha1.GlobalSecondaryIndex
+		wantCalls     int
+		wantIndexName string
+		wantErr       error
+	}{
+		{
+			name:      "only empty updates sends nothing",
+			updated:   []*v1alpha1.GlobalSecondaryIndex{projectionOnly("gsi1"), projectionOnly("gsi2")},
+			wantCalls: 0,
+			wantErr:   nil,
+		},
+		{
+			name:          "empty update is skipped in favour of the next one",
+			updated:       []*v1alpha1.GlobalSecondaryIndex{projectionOnly("gsi1"), withOnDemand("gsi2")},
+			wantCalls:     1,
+			wantIndexName: "gsi2",
+			wantErr:       nil,
+		},
+		{
+			name:          "empty updates do not keep the resource requeued",
+			updated:       []*v1alpha1.GlobalSecondaryIndex{withOnDemand("gsi1"), projectionOnly("gsi2")},
+			wantCalls:     1,
+			wantIndexName: "gsi1",
+			wantErr:       nil,
+		},
+		{
+			name:          "remaining non-empty updates requeue",
+			updated:       []*v1alpha1.GlobalSecondaryIndex{withOnDemand("gsi1"), withOnDemand("gsi2")},
+			wantCalls:     1,
+			wantIndexName: "gsi1",
+			wantErr:       requeueWaitGSIReady,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := &recordingHTTPClient{}
+			rm := newRM(client)
+			desired, latest := newTestTable(), newTestTable()
+			desired.ko.Annotations = map[string]string{
+				svcapitypes.GSIProvisionedThroughputManagedByAnnotation: svcapitypes.TableProvisionedThroughputManagedByExternalAutoscaler,
+			}
+			desired.ko.Spec.GlobalSecondaryIndexes = tt.updated
+
+			err := rm.updateGSIs(context.Background(), desired, latest, tt.updated)
+			require.Equal(t, tt.wantErr, err)
+			require.Len(t, client.calls, tt.wantCalls)
+			if tt.wantCalls == 0 {
+				return
+			}
+			var body struct {
+				GlobalSecondaryIndexUpdates []struct {
+					Update struct {
+						IndexName string
+					}
+				}
+			}
+			require.NoError(t, json.Unmarshal(client.calls[0].body, &body))
+			require.Len(t, body.GlobalSecondaryIndexUpdates, 1)
+			require.Equal(t, tt.wantIndexName, body.GlobalSecondaryIndexUpdates[0].Update.IndexName)
+		})
+	}
+}

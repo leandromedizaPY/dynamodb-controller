@@ -248,16 +248,15 @@ func (rm *resourceManager) updateGSIs(
 		return requeueWaitGSIReady
 	}
 
-	gsiUpdatesInQueue := len(updatedGSIs) - 1
-	warmPending := false
-
-	input := &svcsdk.UpdateTableInput{
-		TableName:            aws.String(*latest.ko.Spec.TableName),
-		AttributeDefinitions: newSDKAttributesDefinition(desired.ko.Spec.AttributeDefinitions),
-	}
-
 	throughputManagedExternally := isGSIProvisionedThroughputManagedByExternalAutoscaler(desired.ko)
 
+	// Build one update action per changed index, skipping actions that would
+	// carry nothing to change. That happens when the only differences are
+	// fields UpdateTable cannot modify (e.g. Projection) or provisioned
+	// throughput owned by an external autoscaler, and AWS rejects such an
+	// action with a ValidationException.
+	var pending []*v1alpha1.GlobalSecondaryIndex
+	var actions []*svcsdktypes.UpdateGlobalSecondaryIndexAction
 	for _, updatedGSI := range updatedGSIs {
 		updateAction := &svcsdktypes.UpdateGlobalSecondaryIndexAction{
 			IndexName:          aws.String(*updatedGSI.IndexName),
@@ -268,27 +267,43 @@ func (rm *resourceManager) updateGSIs(
 		if !throughputManagedExternally {
 			updateAction.ProvisionedThroughput = newSDKProvisionedThroughput(updatedGSI.ProvisionedThroughput)
 		}
-		// AWS requires WarmThroughput to be the only operation in the request
-		// for an index, so it is never sent alongside a throughput change.
-		// Warm throughput is raised on a later reconcile by
-		// syncGSIWarmThroughput; here we only note whether that is needed so
-		// we requeue instead of falling through in the same reconcile.
-		var latestWT *v1alpha1.WarmThroughput
-		for _, latestGSI := range latest.ko.Spec.GlobalSecondaryIndexes {
-			if latestGSI != nil && latestGSI.IndexName != nil && *latestGSI.IndexName == *updatedGSI.IndexName {
-				latestWT = latestGSI.WarmThroughput
-				break
-			}
+		if updateAction.ProvisionedThroughput == nil && updateAction.OnDemandThroughput == nil {
+			continue
 		}
-		warmPending = warmThroughputNeedsIncrease(updatedGSI.WarmThroughput, latestWT)
-		update := svcsdktypes.GlobalSecondaryIndexUpdate{
-			Update: updateAction,
-		}
-		input.GlobalSecondaryIndexUpdates = append(input.GlobalSecondaryIndexUpdates, update)
-		// We can only remove, update or add one GSI at once. Hence we return the update call input
-		// after we find the first updated GSI.
-		break
+		pending = append(pending, updatedGSI)
+		actions = append(actions, updateAction)
 	}
+
+	if len(actions) == 0 {
+		return nil
+	}
+
+	// We can only remove, update or add one GSI at once, so only the first
+	// pending update is sent and the rest are left for the next reconcile.
+	updatedGSI := pending[0]
+	gsiUpdatesInQueue := len(actions) - 1
+
+	input := &svcsdk.UpdateTableInput{
+		TableName:            aws.String(*latest.ko.Spec.TableName),
+		AttributeDefinitions: newSDKAttributesDefinition(desired.ko.Spec.AttributeDefinitions),
+		GlobalSecondaryIndexUpdates: []svcsdktypes.GlobalSecondaryIndexUpdate{{
+			Update: actions[0],
+		}},
+	}
+
+	// AWS requires WarmThroughput to be the only operation in the request
+	// for an index, so it is never sent alongside a throughput change.
+	// Warm throughput is raised on a later reconcile by
+	// syncGSIWarmThroughput; here we only note whether that is needed so
+	// we requeue instead of falling through in the same reconcile.
+	var latestWT *v1alpha1.WarmThroughput
+	for _, latestGSI := range latest.ko.Spec.GlobalSecondaryIndexes {
+		if latestGSI != nil && latestGSI.IndexName != nil && *latestGSI.IndexName == *updatedGSI.IndexName {
+			latestWT = latestGSI.WarmThroughput
+			break
+		}
+	}
+	warmPending := warmThroughputNeedsIncrease(updatedGSI.WarmThroughput, latestWT)
 
 	_, err = rm.sdkapi.UpdateTable(ctx, input)
 	rm.metrics.RecordAPICall("UPDATE", "UpdateTable", err)
