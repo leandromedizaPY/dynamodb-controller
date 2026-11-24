@@ -122,6 +122,18 @@ def table_gsi():
     except:
         pass
 
+@pytest.fixture(scope="function")
+def table_gsi_external_autoscaler():
+    resource_name = random_suffix_name("table-gsi-ext-as", 32)
+    (ref, cr) = create_table(resource_name, "table_gsi_external_autoscaler")
+
+    yield ref, cr
+    try:
+        _, deleted = k8s.delete_custom_resource(ref, wait_periods=3, period_length=10)
+        assert deleted
+    except:
+        pass
+
 @pytest.fixture(scope="module")
 def all_in_table():
     resource_name = random_suffix_name("table-all-fields", 32)
@@ -619,6 +631,78 @@ class TestTable:
             timeout_seconds=MODIFY_WAIT_AFTER_SECONDS,
             interval_seconds=3,
         )
+
+    def test_external_autoscaler_capacity_not_reconciled(self, table_gsi_external_autoscaler):
+        (ref, res) = table_gsi_external_autoscaler
+
+        table_name = res["spec"]["tableName"]
+        index_name = "office-per-city"
+
+        assert self.table_exists(table_name)
+        k8s.wait_resource_consumed_by_controller(ref)
+
+        # Change table and GSI capacity outside ACK, as Application Auto
+        # Scaling would. DynamoDB applies them one at a time.
+        c = boto3.client("dynamodb", region_name=get_region())
+        c.update_table(
+            TableName=table_name,
+            ProvisionedThroughput={"ReadCapacityUnits": 7, "WriteCapacityUnits": 7},
+        )
+        table.wait_until(
+            table_name,
+            table.provisioned_throughput_matcher(7, 7),
+            timeout_seconds=MODIFY_WAIT_AFTER_SECONDS,
+            interval_seconds=3,
+        )
+        table.wait_until(
+            table_name,
+            table.status_matches("ACTIVE"),
+            timeout_seconds=MODIFY_WAIT_AFTER_SECONDS,
+            interval_seconds=3,
+        )
+        c.update_table(
+            TableName=table_name,
+            GlobalSecondaryIndexUpdates=[{
+                "Update": {
+                    "IndexName": index_name,
+                    "ProvisionedThroughput": {"ReadCapacityUnits": 7, "WriteCapacityUnits": 7},
+                },
+            }],
+        )
+        table.wait_until(
+            table_name,
+            table.gsi_provisioned_throughput_matcher(index_name, 7, 7),
+            timeout_seconds=MODIFY_WAIT_AFTER_SECONDS,
+            interval_seconds=3,
+        )
+
+        # Trigger a reconcile with an unrelated spec change. Tag-only changes
+        # return before the throughput comparison, so enable TTL instead.
+        updates = {
+            "spec": {
+                "timeToLive": {
+                    "attributeName": "ForumName",
+                    "enabled": True
+                }
+            }
+        }
+        k8s.patch_custom_resource(ref, updates)
+
+        table.wait_until(
+            table_name,
+            table.ttl_on_attribute_matches("ForumName"),
+            timeout_seconds=MODIFY_WAIT_AFTER_SECONDS,
+            interval_seconds=3,
+        )
+        assert k8s.wait_on_condition(ref, "ACK.ResourceSynced", "True", wait_periods=10)
+
+        # Give the controller time to act on any remaining drift.
+        time.sleep(MODIFY_WAIT_AFTER_SECONDS)
+
+        record = table.get(table_name)
+        assert record["ProvisionedThroughput"]["ReadCapacityUnits"] == 7
+        assert record["ProvisionedThroughput"]["WriteCapacityUnits"] == 7
+        assert table.gsi_provisioned_throughput_matcher(index_name, 7, 7)(record)
 
     def test_update_insights(self, table_insights):
         (ref, res) = table_insights

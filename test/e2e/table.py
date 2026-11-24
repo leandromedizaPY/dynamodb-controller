@@ -216,6 +216,31 @@ def gsi_on_demand_throughput_matcher(index_name: str, max_read: int, max_write: 
     return GSIOnDemandThroughputMatcher(index_name, max_read, max_write)
 
 
+class GSIProvisionedThroughputMatcher:
+    def __init__(self, index_name: str, read_capacity_units: int, write_capacity_units: int):
+        self.index_name = index_name
+        self.read_capacity_units = read_capacity_units
+        self.write_capacity_units = write_capacity_units
+
+    def __call__(self, record: dict) -> bool:
+        gsis = record.get("GlobalSecondaryIndexes", [])
+        for gsi in gsis:
+            if gsi.get("IndexName") != self.index_name:
+                continue
+            if gsi.get("IndexStatus") != "ACTIVE":
+                return False
+            pt = gsi.get("ProvisionedThroughput")
+            if pt is None:
+                return False
+            return (pt.get("ReadCapacityUnits") == self.read_capacity_units
+                    and pt.get("WriteCapacityUnits") == self.write_capacity_units)
+        return False
+
+
+def gsi_provisioned_throughput_matcher(index_name: str, read_capacity_units: int, write_capacity_units: int) -> TableMatchFunc:
+    return GSIProvisionedThroughputMatcher(index_name, read_capacity_units, write_capacity_units)
+
+
 class SSESpecificationMatcher:
     def __init__(self, enabled: int, type: int):
         self.enabled = enabled
