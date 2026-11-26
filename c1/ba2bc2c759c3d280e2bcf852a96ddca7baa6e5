@@ -1,0 +1,21 @@
+pkg/resource/table/hooks_test.go
+  s_8746bf538000ed::t_f24f87c060e768 1566-1624
+pkg/resource/table/hooks.go
+  s_8746bf538000ed::t_8d5948342bfbdf 248-256
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c1ba2bc2c759c3d280e2bcf852a96ddca7baa6e5",
+  "prompts": {},
+  "sessions": {
+    "s_8746bf538000ed": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "57a92341-8744-446b-aca5-577ff1e8e6a9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Leandro Mediza <leandro.mediza@glovoapp.com>"
+    }
+  }
+}
