@@ -245,6 +245,15 @@ func (rm *resourceManager) customUpdateTable(
 		if err := rm.syncTable(ctx, desired, latest, delta); err != nil {
 			return nil, err
 		}
+		// A billing mode change leaves the table UPDATING, and the remaining
+		// updates were computed against the previous billing mode (e.g. a
+		// PROVISIONED -> PAY_PER_REQUEST switch would otherwise fall through to
+		// syncTableProvisionedThroughput with empty capacity, which AWS rejects
+		// with a terminal ValidationException). Requeue and finish them once
+		// the table settles.
+		if delta.DifferentAt("Spec.BillingMode") {
+			return nil, requeueWaitWhileUpdating
+		}
 	}
 
 	if delta.DifferentAt("Spec.ContinuousBackups") {

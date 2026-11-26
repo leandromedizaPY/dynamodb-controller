@@ -1563,3 +1563,62 @@ func Test_updateGSIs_skipsEmptyUpdates(t *testing.T) {
 		})
 	}
 }
+
+// Test_customUpdateTable_requeuesAfterBillingModeChange guards the update
+// ordering when switching from PROVISIONED to PAY_PER_REQUEST. Once syncTable
+// has issued the billing mode change, no other update may follow in the same
+// reconcile: the GSI update for an index that drops its provisioned throughput
+// carries nothing to send, and falling through to
+// syncTableProvisionedThroughput with an empty spec sends 0 capacity units,
+// which AWS rejects with a terminal ValidationException.
+func Test_customUpdateTable_requeuesAfterBillingModeChange(t *testing.T) {
+	client := &recordingHTTPClient{}
+	rm := &resourceManager{
+		metrics: ackmetrics.NewMetrics("dynamodb"),
+		sdkapi: svcsdk.NewFromConfig(aws.Config{
+			Region:           "us-west-2",
+			Credentials:      fakeCredentialsProvider{},
+			HTTPClient:       client,
+			RetryMaxAttempts: 1,
+		}),
+	}
+	desired, latest := newTestTable(), newTestTable()
+	latest.ko.Spec.BillingMode = aws.String("PROVISIONED")
+	latest.ko.Spec.ProvisionedThroughput = &v1alpha1.ProvisionedThroughput{
+		ReadCapacityUnits:  aws.Int64(2),
+		WriteCapacityUnits: aws.Int64(2),
+	}
+	latest.ko.Spec.GlobalSecondaryIndexes = []*v1alpha1.GlobalSecondaryIndex{{
+		IndexName: aws.String("gsi1"),
+		ProvisionedThroughput: &v1alpha1.ProvisionedThroughput{
+			ReadCapacityUnits:  aws.Int64(2),
+			WriteCapacityUnits: aws.Int64(2),
+		},
+	}}
+	latest.ko.Status.GlobalSecondaryIndexesDescriptions = []*v1alpha1.GlobalSecondaryIndexDescription{{
+		IndexName:   aws.String("gsi1"),
+		IndexStatus: aws.String("ACTIVE"),
+	}}
+	desired.ko.Spec.BillingMode = aws.String("PAY_PER_REQUEST")
+	desired.ko.Spec.ProvisionedThroughput = &v1alpha1.ProvisionedThroughput{}
+	desired.ko.Spec.GlobalSecondaryIndexes = []*v1alpha1.GlobalSecondaryIndex{{
+		IndexName: aws.String("gsi1"),
+	}}
+
+	delta := compare.NewDelta()
+	delta.Add("Spec.BillingMode", desired.ko.Spec.BillingMode, latest.ko.Spec.BillingMode)
+	delta.Add("Spec.ProvisionedThroughput", desired.ko.Spec.ProvisionedThroughput, latest.ko.Spec.ProvisionedThroughput)
+	delta.Add("Spec.GlobalSecondaryIndexes", desired.ko.Spec.GlobalSecondaryIndexes, latest.ko.Spec.GlobalSecondaryIndexes)
+
+	_, err := rm.customUpdateTable(context.Background(), desired, latest, delta)
+	require.Equal(t, requeueWaitWhileUpdating, err)
+
+	require.Len(t, client.calls, 1, "only the billing mode change may be sent in this reconcile")
+	var body struct {
+		BillingMode           string
+		ProvisionedThroughput json.RawMessage
+	}
+	require.NoError(t, json.Unmarshal(client.calls[0].body, &body))
+	require.Equal(t, "PAY_PER_REQUEST", body.BillingMode)
+	require.Empty(t, body.ProvisionedThroughput)
+}
